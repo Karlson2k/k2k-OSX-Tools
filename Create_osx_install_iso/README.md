@@ -1,0 +1,2 @@
+Bash script for building bootable .ISO image from downloaded application for OS X upgrade.
+Resulting .ISO can be used for installation on virtual machines (virtual machine must be running on host with Apple hardware).
