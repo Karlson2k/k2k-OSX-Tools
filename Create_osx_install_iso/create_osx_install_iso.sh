@@ -12,14 +12,14 @@
 # Latest version:
 # https://raw.githubusercontent.com/Karlson2k/k2k-OSX-Tools/master/Create_osx_install_iso/create_osx_install_iso.sh
 #
-# Version 1.0.0
+# Version 1.0.1
 
 readonly script_org_name='create_osx_install_iso.sh' || exit 127
 unset work_dir script_name tmp_dir OSX_inst_name OSX_inst_inst_dmg_mnt \
 	OSX_inst_img_rw_mnt OSX_inst_img_rw_dev || exit 127
 work_dir="$PWD"
 save_IFS="$IFS" || exit 127
-export LANG='en_US.UTF-8' # prevent localizaion of output, not really required
+export LANG='en_US.UTF-8' || exit 127 # prevent localization of output, not really required 
 
 [[ `ps -o comm -p $$ | tail -n1 2>/dev/null` =~ bash$ ]] || {
 	echo "Script is designed to be run only with bash"
@@ -163,14 +163,15 @@ script_version="$(sed -n -e '\|^# Version| {s|^# Version \(.*$\)|\1|p; q;}' "${B
 
 print_help() {
 	echo "\
-Script for creating .iso images from downloaded OS X Install application.
+Script for creating .iso images from downloaded OS X upgrade application.
 Usage:"
 	echo_enh_n "      $script_name"; echo " [options]
 
 Valid options are:
       -a, --app[lication] <OS X Install app>
-                   Path and name of OS X install application.
-                   Path can be omitted is application located at default path.
+                   Path and name of OS X upgrade application.
+                   Path can be omitted if application is located at
+                   default path.
       -i, --iso <path with name for .iso>
                    Path with optional name for output .iso
       -m, --method <D>
@@ -586,7 +587,7 @@ else
 	stage_end_ok "specified on command line: \"$out_dir/$iso_name\""
 fi
 
-stage_start_nl "Converting editable image to .iso"
+stage_start_nl "Converting writeable image to .iso"
 unset iso_created || exit_with_error
 OSX_inst_result_image_ro="$out_dir/$iso_name" || exit_with_error
 OSX_inst_result_flag="$tmp_dir/output_image_is_ready" || exit_with_error
