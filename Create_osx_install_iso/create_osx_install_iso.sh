@@ -516,9 +516,10 @@ unset OSX_inst_img_rw_dev
 stage_end_ok "Unmointing succeed"
 
 insert_version_into_name() {
-	[[ -n "$1" ]] && [[ -n "$2" ]] || return 1
 	local name="$1"
 	local version="$2"
+	[[ -z "$name" ]] && return 1
+	[[ -z "$version" ]] && { echo "$name"; return 0; }
 	local result
 	local ins_aft
 	if [[ "$name" =~ (^|[[:space:]])"OS X"($|[[:space:]]) ]]; then
