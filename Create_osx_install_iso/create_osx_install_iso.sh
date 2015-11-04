@@ -12,7 +12,7 @@
 # Latest version:
 # https://raw.githubusercontent.com/Karlson2k/k2k-OSX-Tools/master/Create_osx_install_iso/create_osx_install_iso.sh
 #
-# Version 1.0.1
+# Version 1.0.2
 
 readonly script_org_name='create_osx_install_iso.sh' || exit 127
 unset work_dir script_name tmp_dir OSX_inst_name OSX_inst_inst_dmg_mnt \
@@ -474,7 +474,8 @@ else
 	stage_end_ok "$OSX_inst_ver"
 fi
 
-[[ "$OSX_inst_ver" != "10.11" ]] && echo_warning "This script is tested only with images of OS X version 10.11"
+[[ "$OSX_inst_ver" == "10.11" ]] || [[ "$OSX_inst_ver" == "10.11.1" ]] || \
+	echo_warning "This script is tested only with images of OS X versions 10.11 and 10.11.1"
 
 stage_start_nl "Renaming partition on writeable image"
 if ! diskutil rename "$OSX_inst_img_rw_mnt" "$OSX_inst_prt_name"; then
