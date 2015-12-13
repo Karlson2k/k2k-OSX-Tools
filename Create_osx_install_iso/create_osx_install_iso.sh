@@ -474,8 +474,8 @@ else
 	stage_end_ok "$OSX_inst_ver"
 fi
 
-[[ "$OSX_inst_ver" == "10.11" ]] || [[ "$OSX_inst_ver" == "10.11.1" ]] || \
-	echo_warning "This script is tested only with images of OS X versions 10.11 and 10.11.1"
+[[ "$OSX_inst_ver" == "10.11" ]] || [[ "$OSX_inst_ver" == "10.11.1" ]] || [[ "$OSX_inst_ver" == "10.11.2" ]] || \
+	echo_warning "This script is tested only with images of OS X versions 10.11, 10.11.1 and 10.11.2"
 
 stage_start_nl "Renaming partition on writeable image"
 if ! diskutil rename "$OSX_inst_img_rw_mnt" "$OSX_inst_prt_name"; then
