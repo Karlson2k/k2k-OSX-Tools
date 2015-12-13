@@ -12,7 +12,7 @@
 # Latest version:
 # https://raw.githubusercontent.com/Karlson2k/k2k-OSX-Tools/master/Create_osx_install_iso/create_osx_install_iso.sh
 #
-# Version 1.0.2
+# Version 1.0.3
 
 readonly script_org_name='create_osx_install_iso.sh' || exit 127
 unset work_dir script_name tmp_dir OSX_inst_name OSX_inst_inst_dmg_mnt \
