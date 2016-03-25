@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Script for building bootable .iso images from downloaded OS X upgrade
-# Copyright (C) 2015 Karlson2k (Evgeny Grin)
+# Copyright (C) 2015-2016 Karlson2k (Evgeny Grin)
 #
 # You can run, copy, modify, publish and do whatever you want with this
 # script as long as this message and copyright string above are preserved.
