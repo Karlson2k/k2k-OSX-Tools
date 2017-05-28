@@ -606,7 +606,7 @@ if ! [[ -e "$OSX_inst_result_flag" ]]; then
 			echo_warning "Next command will be executed with sudo, you may be asked for password."
 			$sudo_prf hdiutil makehybrid -o "$OSX_inst_result_image_ro" "$OSX_inst_img_rw" -hfs -udf -default-volume-name "$OSX_inst_prt_name" && touch "$OSX_inst_result_flag"
 		else
-			echo_warning "Usage os sudo was disabled by command parameter"
+			echo_warning "Usage of sudo was disabled by command parameter"
 		fi
 	fi
 fi
