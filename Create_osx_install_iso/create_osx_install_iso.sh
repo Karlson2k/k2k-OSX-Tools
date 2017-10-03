@@ -296,6 +296,40 @@ else
 	echo_enh "Using \"$OSX_inst_app\"."
 fi
 
+stage_start "Creating temporary directory"
+tmp_dir="$(mktemp -d -t osx_iso_tmpdir)" || exit_with_error "Can't create tmp directory"
+# mkdir "tmp-tmp"
+# tmp_dir=$(cd tmp-tmp && pwd) || exit_with_error "Can't create tmp directory"
+stage_end_ok "succeed"
+
+download_install_files() {
+	stage_start_nl "Downloading installation files"
+	unset dwnl_list num_files i save_name || exit_with_error "Can't unset variable"
+	sucatalog="$tmp_dir/sucatalog.plist"
+	curl https://swscan.apple.com/content/catalogs/others/index-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog.gz | gzcat > $sucatalog || \
+		exit_with_error "Can't download software update catalog"
+	IFS=$'\n'
+	dwnl_list=( $(sed -n -e '\|^ *<string>.*InstallAssistantAuto.smd</string>$|,\|</array>| { \|<key>URL</key>| {n;s|^ *<string>\(http://.*\)</string> *$|\1|p;};}' $sucatalog) ) && \
+		[[ -n $dwnl_list ]] || exit_with_error "Can't find packages to download"
+	IFS="$save_IFS"
+	num_files=${#dwnl_list[@]}
+	[[ ${num_files} -ge 10 ]] || exit_with_error "Can't find all required packages"
+	((num_files--)) #ignored RecoveryHDMetaDmg.pkg
+		for ((i=0; i<=$num_files; i++)); do
+		save_name=${dwnl_list[$i]##*/}
+		echo $save_name
+		echo Downloading file $((i+1)) of $num_files
+		curl -o "$tmp_dir/$save_name" ${dwnl_list[$i]} || \
+			( echo_warning "Download failed. Retrying..." && \
+			  curl -o "$tmp_dir/$save_name" -C - ${dwnl_list[$i]} ) || exit_with_error "Failed to download"
+		mv "$tmp_dir/$save_name" "$work_dir/$save_name"
+	done
+	stage_end_ok "Download completed"
+}
+
+download_install_files
+exit 5
+
 stage_start "Detecting macOS name for installation"
 unset test_name OSX_inst_prt_name || exit_with_error
 test_name=$(sed -n -e '\|<key>CFBundleDisplayName</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|\1|p; q; }' \
@@ -310,12 +344,6 @@ else
 	OSX_inst_prt_name="Install $OSX_inst_name"
 	stage_end_warn "guessed \"$OSX_inst_name\""
 fi
-
-stage_start "Creating temporary directory"
-tmp_dir="$(mktemp -d -t osx_iso_tmpdir)" || exit_with_error "Can't create tmp directory"
-# mkdir "tmp-tmp"
-# tmp_dir=$(cd tmp-tmp && pwd) || exit_with_error "Can't create tmp directory"
-stage_end_ok "succeed"
 
 stage_start_nl "Mounting InstallESD.dmg"
 OSX_inst_inst_dmg="$OSX_inst_app"'/Contents/SharedSupport/InstallESD.dmg'
@@ -476,8 +504,8 @@ else
 	stage_end_ok "$OSX_inst_ver"
 fi
 
-[[ "$OSX_inst_ver" =~ ^10.11($|.[1-4]$)|^10.12($|.[1-5]$) ]] || \
-	echo_warning "Warning! This script is tested only with images of macOS versions 10.11.0-10.11.4 and 10.12.0-10.12.5. Use with your own risk!"
+[[ "$OSX_inst_ver" =~ ^10.11($|.[1-4]$)|^10.12($|.[1-5]$)|^10.13.0 ]] || \
+	echo_warning "Warning! This script is tested only with images of macOS versions 10.11.0-10.11.4, 10.12.0-10.12.5 and 10.13.0. Use with your own risk!"
 
 stage_start_nl "Renaming partition on writeable image"
 if ! diskutil rename "$OSX_inst_img_rw_mnt" "$OSX_inst_prt_name"; then
