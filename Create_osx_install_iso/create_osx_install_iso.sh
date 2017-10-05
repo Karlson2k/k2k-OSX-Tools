@@ -304,31 +304,131 @@ stage_end_ok "succeed"
 
 download_install_files() {
 	stage_start_nl "Downloading installation files"
-	unset dwnl_list num_files i save_name || exit_with_error "Can't unset variable"
+	unset dwnl_list dwnl_sizes num_files i save_name file_name resume_download reuse_files || exit_with_error "Can't unset variable"
 	sucatalog="$tmp_dir/sucatalog.plist"
 	curl https://swscan.apple.com/content/catalogs/others/index-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog.gz | gzcat > $sucatalog || \
 		exit_with_error "Can't download software update catalog"
 	IFS=$'\n'
 	dwnl_list=( $(sed -n -e '\|^ *<string>.*InstallAssistantAuto.smd</string>$|,\|</array>| { \|<key>URL</key>| {n;s|^ *<string>\(http://.*\)</string> *$|\1|p;};}' $sucatalog) ) && \
 		[[ -n $dwnl_list ]] || exit_with_error "Can't find packages to download"
+	dwnl_sizes=( $(sed -n -e '\|^ *<string>.*InstallAssistantAuto.smd</string>$|,\|</array>| { \|<key>Size</key>| {n;s|^ *<integer>\(.*\)</integer> *$|\1|p;};}' $sucatalog) ) && \
+		[[ -n $dwnl_sizes  ]] || exit_with_error "Can't find sizes of packages"
 	IFS="$save_IFS"
+	[[ ${#dwnl_list[@]} -ge 10 ]] || exit_with_error "Can't find all required packages"
+	[[ ${#dwnl_list[@]} -eq ${#dwnl_sizes[@]} ]] || exit_with_error "Can't find sizes of required packages"
 	num_files=${#dwnl_list[@]}
-	[[ ${num_files} -ge 10 ]] || exit_with_error "Can't find all required packages"
-	((num_files--)) #ignored RecoveryHDMetaDmg.pkg
-		for ((i=0; i<=$num_files; i++)); do
+	for ((i=0; i<=$num_files; i++)); do
+		file_name=${dwnl_list[$i]##*/}
+		if [[ "${file_name}" = "RecoveryHDMetaDmg.pkg" ]]; then
+			unset dwnl_list[$i] && unset dwnl_sizes[$i] || exit_with_error "Can't unset variable"
+			continue
+		fi
+		if [[ -f "$work_dir/$file_name" ]]; then
+			if [[ $(stat -f %z "$work_dir/$file_name") -eq "${dwnl_sizes[$i]}" ]]; then
+				if [[ -z $reuse_files ]]; then
+					echo "Found file $file_name with size ${dwnl_sizes[$i]}, which is exactly match download size."
+					echo 'Skip downloading this and other matched files?'
+					echo "If you choose 'no', this and other files will be overwritten with downloaded files."
+					valid_answers=(y Y n N q)
+					read -n 1 -p "[y/n, q for quit]: " answer
+					echo ''
+					until is_answer_valid $answer ${valid_answers[@]} 'q'; do
+						echo "'$answer' is incorrect response"
+						read -n 1 -p "Select y, n or q for quit: " answer
+						echo ''
+					done
+					[[ "$answer" == "q" ]] && { echo_warning "Aborted."; exit 2; }
+					case "$answer" in
+						'y' | 'Y') reuse_files='yes' ;;
+						'n' | 'N') reuse_files='no' ;;
+					esac
+				fi
+				if [[ "$reuse_files" = "no" ]]; then
+					rm "$work_dir/$file_name" || exit_with_error "Can't delete file $work_dir/$file_name"
+				else
+					unset dwnl_list[$i] && unset dwnl_sizes[$i] || exit_with_error "Can't unset variable"
+				fi
+			else
+				echo "Found file $file_name with wrong size."
+				echo 'Overwrite it?'
+				echo "If you choose 'no' then .ISO preparation will be aborted."
+				valid_answers=(y Y n N q)
+				read -n 1 -p "[y/n, q for quit]: " answer
+				echo ''
+				until is_answer_valid $answer ${valid_answers[@]} 'q'; do
+					echo "'$answer' is incorrect response"
+					read -n 1 -p "Select y, n or q for quit: " answer
+					echo ''
+				done
+				case "$answer" in
+					'y' | 'Y' | 'q') echo_warning "Aborted."; exit 2;;
+				esac
+			fi
+		elif [[ -f "$work_dir/$file_name.incomplete" ]]; then
+			if [[ -z "$resume_download" ]]; then
+				echo "Found incomplete downloaded file $file_name."
+				echo 'Do you want to resume downloading this and other incomplete files?'
+				echo "If you choose 'no', this and other incomplete files will be fully re-downloaded."
+				valid_answers=(y Y n N q)
+				read -n 1 -p "[y/n, q for quit]: " answer
+				echo ''
+				until is_answer_valid $answer ${valid_answers[@]} 'q'; do
+					echo "'$answer' is incorrect response"
+					read -n 1 -p "Select y, n or q for quit: " answer
+					echo ''
+				done
+				[[ "$answer" == "q" ]] && { echo_warning "Aborted."; exit 2; }
+				case "$answer" in
+					'y' | 'Y') resume_download='yes' ;;
+					'n' | 'N') resume_download='no' ;;
+				esac
+			fi
+			if [[ "$resume_download" = "no" ]]; then
+				rm "$work_dir/$file_name.incomplete" || exit_with_error "Can't delete file $work_dir/$file_name.incomplete"
+			fi
+		fi
+	done
+	dwnl_list=( "${dwnl_list[@]}" ) # rebuild indices 
+	dwnl_sizes=( "${dwnl_sizes[@]}" ) # rebuild indices 
+	[[ -z ${dwnl_list[@]} ]] && echo "Nothing to download: reusing existing files."
+	for ((i=0; i<${#dwnl_list[@]}; i++)); do
+		[[ -z ${dwnl_list[$i]} ]] && exit_with_error
 		save_name=${dwnl_list[$i]##*/}
-		echo $save_name
-		echo Downloading file $((i+1)) of $num_files
-		curl -o "$tmp_dir/$save_name" ${dwnl_list[$i]} || \
+		echo "Downloading file $save_name ($((i+1)) of ${#dwnl_list[@]})"
+		curl -o "$work_dir/$save_name.incomplete" -C - ${dwnl_list[$i]} || \
 			( echo_warning "Download failed. Retrying..." && \
-			  curl -o "$tmp_dir/$save_name" -C - ${dwnl_list[$i]} ) || exit_with_error "Failed to download"
-		mv "$tmp_dir/$save_name" "$work_dir/$save_name"
+			  curl -o "$work_dir/$save_name.incomplete" -C - ${dwnl_list[$i]} ) || exit_with_error "Failed to download"
+		if [[ $(stat -f %z "$work_dir/$file_name") -eq "${dwnl_sizes[$i]}" ]]; then
+			rm "$work_dir/$file_name"
+			exit_with_error "Size mismatch for downloaded file $file_name. Expected size: ${dwnl_sizes[$i]}, real size: $(stat -f %z "$work_dir/$file_name")"
+		fi
+		mv "$work_dir/$save_name.incomplete" "$work_dir/$save_name"
 	done
 	stage_end_ok "Download completed"
 }
 
-download_install_files
-exit 5
+unset test_name answer || exit_with_error
+if [[ ! -f "$OSX_inst_app/Contents/SharedSupport/InstallESD.dmg" ]]; then
+	if [[ $(sed -n -e '\|<key>CFBundleShortVersionString</key>| { N; s|^.*<string>\([0-9]\{1,\}\)\..*</string>.*$|\1|p; q; }' \
+	 		"$OSX_inst_app/Contents/Info.plist" 2>/dev/null) -eq 13 ]]; then
+		echo_warning "Found High Sierra \"lite\" installer without OS images."
+		valid_answers=(y Y n N q)
+		read -n 1 -p "Try to download OS images? [y/n, q for quit]: " answer
+		echo ''
+		until is_answer_valid $answer ${valid_answers[@]} 'q'; do
+			echo "'$answer' is incorrect response"
+			read -n 1 -p "Select y, n or q for quit: " answer
+			echo ''
+		done
+		case "$answer" in
+			'n' | 'N' | 'q') echo_warning "Aborted."; exit 2;;
+		esac
+		download_install_files
+	fi
+fi
+if [[ ! -f "$OSX_inst_app/Contents/SharedSupport/InstallESD.dmg" ]]; then
+	exit_with_error "$OSX_inst_app/Contents/SharedSupport/InstallESD.dmg is missing"
+fi
 
 stage_start "Detecting macOS name for installation"
 unset test_name OSX_inst_prt_name || exit_with_error
