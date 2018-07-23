@@ -173,7 +173,9 @@ Valid options are:
                    Path can be omitted if application is located at
                    default path.
                    If magic word 'download' is used then installation
-                   files will be downloaded.
+                   files will be downloaded and will not be integrated
+                   into existing installation application, unless
+                   explicitly requested by -p.
       -i, --iso <path with name for .iso>
                    Path with optional name for output .iso
       -o, -overwrite
@@ -186,18 +188,19 @@ Valid options are:
                    Method 3 can produce bootable images without super
                    user rights.
                    Method 4 use official tool for creating installation
-                   media and convert result to .iso image.
+                   media and convert result to .iso image. Images produced
+                   by method 4 have smallest size.
                    Methods 1-3 are suitable for .iso to be used for fresh
                    installations, method 4 is suitable for .iso to be
                    used for installations and upgrades.
       -n, --nosudo Do not use sudo command
       -v, --verify Do not skip verifications (slow down .iso creation)
-      -c, --custom Add custom helper for virtual machine disk
-                   initialization, used automatically for methods 1-3.
+      -s, --script Add helper script for virtual machine disk
+                   initialization. Default for methods 1-3.
                    Custom helper not used when virtual machine is not
                    detected during installation.
-      -c-, --nocustom
-                   Do not add custom helper for virtual machine disk
+      -s-, --noscript
+                   Do not add helper script for virtual machine disk
                    initialization, default for method 4
       -d, --downloadto <path>
                    Use <path> to store downloaded files. Current directory
@@ -248,8 +251,8 @@ while [[ -n "$1" ]]; do
 		--method* ) cr_method="method${1#--method}"; shift ;;
 		-n | --nosudo ) allow_sudo='no'; shift ;;
 		-v | --verify ) unset ver_opt; shift ;;
-		-c | --custom ) cust_script='yes'; shift ;;
-		-c- | --nocustom ) cust_script='no'; shift ;;
+		-s | --script ) cust_script='yes'; shift ;;
+		-s- | --noscript ) cust_script='no'; shift ;;
 		-h | --h | --help ) print_help; exit 0 ;;
 		-V | --version ) print_version; exit 0 ;;
 		*) exit_with_cmd_err "Unknown option \"$1\""
@@ -270,7 +273,7 @@ if [[ -z "$cmd_par_app" ]]; then
 	stage_start "Looking for downloaded OS upgrades"
 	unset test_name || exit_with_error
 	IFS=$'\n'
-	dirlist=(`find /Applications -maxdepth 1 -mindepth 1 \( -name 'Install OS X *.app' -or -name 'Install macOS *.app' \)`) || exit_with_error "Can't find downloaded macOS upgrade"
+	dirlist=(`find /Applications -maxdepth 1 -mindepth 1 -name 'Install macOS *.app'`) || exit_with_error "Can't find downloaded macOS upgrade"
 	IFS="$save_IFS"
 	[[ ${#dirlist[@]} -eq 0 ]] && exit_with_error "Can't find downloaded macOS upgrade"
 	stage_end_ok "found"
@@ -317,8 +320,6 @@ else
 			OSX_inst_app="/Applications/${test_name}"
 		elif check_intall_app "/Applications/Install ${test_name}"; then
 			OSX_inst_app="/Applications/Install ${test_name}"
-		elif check_intall_app "/Applications/Install OS X ${test_name}"; then
-			OSX_inst_app="/Applications/Install OS X ${test_name}"
 		elif check_intall_app "/Applications/Install macOS ${test_name}"; then
 			OSX_inst_app="/Applications/Install macOS ${test_name}"
 		fi
@@ -330,8 +331,6 @@ fi
 
 stage_start "Creating temporary directory"
 tmp_dir="$(mktemp -d -t osx_iso_tmpdir)" || exit_with_error "Can't create tmp directory"
-# mkdir "tmp-tmp"
-# tmp_dir=$(cd tmp-tmp && pwd) || exit_with_error "Can't create tmp directory"
 stage_end_ok "succeed"
 
 download_install_files() {
@@ -436,7 +435,7 @@ download_install_files() {
 		rm -f "$work_dir/BaseSystem.chunklist.incomplete" "$work_dir/AppleDiagnostics.chunklist.incomplete" \
 			"$work_dir/nstallInfo.plist.incomplete"  || exit_with_error "Can't delete file"
 	fi
-	# Second iteration: skip existing files
+	# Second iteration: really skip existing files
 	num_files=${#dwnl_list[@]}
 	for ((i=0; i<=$num_files; i++)); do
 		file_name=${dwnl_list[$i]##*/}
@@ -517,7 +516,7 @@ if [[ ! -f "$OSX_inst_app/Contents/SharedSupport/InstallESD.dmg" ]] || \
 		if [[ -z $install_app_ver ]] || [[ $install_app_ver != $downloaded_ver ]]; then
 			exit_with_error "Downloaded images version ($downloaded_ver) do not match installation application version ($install_app_ver)"
 		fi
-		[[ "$have_su_rights" == "yes" ]] || echo_warning "Next commands will be executed with sudo, you may be asked for password."
+		[[ "use_sudo" == "yes" ]] && echo_warning "Next commands will be executed with sudo, you may be asked for password."
 		stage_start_nl "Moving files to installation App directory"
 		$sudo_prf mkdir -p "$SharedSupport_dir" || exit_with_error "Can't create directory $SharedSupport_dir"
 		$sudo_prf bash -c "sed -e '\|<key>version</key>| {n; s|<string>10.\([0-9]*\(\.[1-9]\{1,\}\)\{0,1\}\)\..*</string>|<string>10.\1</string>|;}' \
@@ -534,7 +533,7 @@ if [[ ! -f "$OSX_inst_app/Contents/SharedSupport/InstallESD.dmg" ]]; then
 	exit_with_error "$OSX_inst_app/Contents/SharedSupport/InstallESD.dmg is missing"
 fi
 
-stage_start "Detecting macOS name for installation"
+stage_start "Detecting macOS name for installation" # !!!!!!!!!!!!!!!!!! Fixit
 unset test_name OSX_inst_prt_name || exit_with_error
 test_name=$(sed -n -e '\|<key>CFBundleDisplayName</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|\1|p; q; }' \
 	 "$OSX_inst_app/Contents/Info.plist" 2>/dev/null) || unset test_name
@@ -543,203 +542,227 @@ if [[ -n "$test_name" ]]; then
 	OSX_inst_prt_name="Install $OSX_inst_name"
 	stage_end_ok "$OSX_inst_name"
 else
-	OSX_inst_name=$(echo "$OSX_inst_app"|sed -n -e's|^.*Install \(\(macOS|OS X\) .\{1,\}\)\.app.*$|\1|p' 2>/dev/null) || unset OSX_inst_name || exit_with_error
+	OSX_inst_name=$(echo "$OSX_inst_app"|sed -n -e's|^.*Install \(\(macOS\) .\{1,\}\)\.app.*$|\1|p' 2>/dev/null) || unset OSX_inst_name || exit_with_error
 	[[ -z "$OSX_inst_name" ]] && OSX_inst_name="macOS"
 	OSX_inst_prt_name="Install $OSX_inst_name"
 	stage_end_warn "guessed \"$OSX_inst_name\""
 fi
 
 if [[ "$cr_method" == "method4" ]]; then
-	stage_start_nl "Creating blank writable image"
-	OSX_inst_img_rw="$tmp_dir/OS_X_Install.sparsebundle"
-	OSX_inst_img_rw_tmp_name="$OSX_inst_prt_name" || exit_with_error
-	hdiutil create -size "$OSX_inst_img_rw_size" "$OSX_inst_img_rw" -type SPARSEBUNDLE -fs HFS+ -layout SPUD -volname "$OSX_inst_img_rw_tmp_name" || exit_with_error "Can't create writable image"
-	stage_end_ok "Creating succeed"
-
 	
-fi
-stage_start_nl "Mounting InstallESD.dmg"
-OSX_inst_inst_dmg="$OSX_inst_app"'/Contents/SharedSupport/InstallESD.dmg'
-OSX_inst_inst_dmg_mnt="$tmp_dir/InstallESD_dmg_mnt"
-hdiutil attach "$OSX_inst_inst_dmg" -kernel -readonly -nobrowse ${ver_opt+-noverify} -mountpoint "$OSX_inst_inst_dmg_mnt" || exit_with_error "Can't mount installation image. Reboot recommended before retry."
-OSX_inst_base_dmg="$OSX_inst_app"'/Contents/SharedSupport//BaseSystem.dmg' || exit_with_error
-stage_end_ok "Mounting succeed"
+	stage_start "Choosing creation method"
+	if [[ -n "$cr_method" ]]; then
+		stage_end_ok "Method ${cr_method#method}, specified on command line"
+	fi
+	if [[ -z "$OSX_inst_app" ]] || [[ "$OSX_inst_app" == "download" ]]; then
+		exit_with_error "Method 4 can't be used without installed official macOS installation application"
+	fi
 
-stage_start "Calculating required image size"
-unset OSX_inst_inst_dmg_used_size OSX_inst_base_dmg_real_size OSX_inst_base_dmg_size || exit_with_error "Can't unset variables"
-OSX_inst_inst_dmg_used_size=$(hdiutil imageinfo "$OSX_inst_inst_dmg" -plist | \
-	sed -En -e '\|<key>Total Non-Empty Bytes</key>| { N; s|^.*<integer>(.+)</integer>.*$|\1|p; q; }') || unset OSX_inst_inst_dmg_used_size
-OSX_inst_base_dmg_real_size=$(hdiutil imageinfo "$OSX_inst_base_dmg" -plist | \
-	sed -En -e '\|<key>Total Bytes</key>| { N; s|^.*<integer>(.+)</integer>.*$|\1|p; q; }') || unset OSX_inst_base_dmg_real_size
-OSX_inst_base_dmg_size=$(stat -f %z "$OSX_inst_base_dmg") || unset OSX_inst_base_dmg_size
-((OSX_inst_base_dmg_size=(OSX_inst_base_dmg_size/512 + 1)*512)) # round to sector bound
-if !((OSX_inst_inst_dmg_used_size)) || !((OSX_inst_base_dmg_real_size)) || !((OSX_inst_base_dmg_size)); then
-	((OSX_inst_img_rw_size=12*1024*1024*1024))
-	stage_end_warn "Can't calculate, will use $OSX_inst_img_rw_size ($((OSX_inst_img_rw_size/(1024*1024))) MiB)"
-else
-	((OSX_inst_img_rw_size=OSX_inst_base_dmg_real_size+(OSX_inst_inst_dmg_used_size-OSX_inst_base_dmg_size) ))
-	((OSX_inst_img_rw_size+=OSX_inst_img_rw_size/10)) # add 10% for overhead, no need to be precise
-	((OSX_inst_img_rw_size=(OSX_inst_img_rw_size/512 + 1)*512)) # round to sector bound
-	stage_end_ok "$OSX_inst_img_rw_size ($((OSX_inst_img_rw_size/(1024*1024))) MiB)"
-fi
-
-stage_start "Checking for available disk space"
-unset tmp_dir_free_space || exit_with_error
-tmp_dir_free_space="$(df -bi "$tmp_dir" | \
-	sed -nE -e 's|^.+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+)[[:space:]]+[0-9]{1,3}%[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]{1,3}%[[:space:]]+/.*$|\1|p' )" || unset tmp_dir_free_space
-if [[ "${tmp_dir_free_space-notset}" == "notset" ]] || ( [[ -n "$tmp_dir_free_space" ]] && !((tmp_dir_free_space)) ); then
-	tmp_dir_free_space='0'
-	stage_end_warn "Can't determinate"
-else
-	((tmp_dir_free_space*=512))
-	if ((tmp_dir_free_space < OSX_inst_img_rw_size)); then
-		stage_end_warn "$tmp_dir_free_space ($((tmp_dir_free_space/(1024*1024))) MiB), image creation may fail"
+	stage_start "Calculating required image size"
+	unset OSX_inst_img_rw_size || exit_with_error "Can't unset variables"
+	OSX_inst_img_rw_size=$(du -sk "$OSX_inst_app/" | cut -f1) || unset OSX_inst_img_rw_size
+	if ((OSX_inst_img_rw_size < 3*1024*1024 )); then
+		OSX_inst_img_rw_size = $((8*1024*1024*1024)) || exit_with_error # Can't calculate, use 8Gb
+		stage_end_warn "Can't calculate, will use $OSX_inst_img_rw_size ($((OSX_inst_img_rw_size/(1024*1024))) MiB)"
 	else
-		stage_end_ok "$tmp_dir_free_space ($((tmp_dir_free_space/(1024*1024))) MiB)"
-	fi
-fi
-
-stage_start "Choosing creation method"
-if [[ -n "$cr_method" ]]; then
-	stage_end_ok "Method ${cr_method#method}, specified on command line"
-	if [[ "$cr_method" != "method3" ]] && [[ "$have_su_rights" != "yes" ]] && [[ "$allow_sudo" != "yes" ]]; then
-		echo_warning "Resulting image probably will be unbootable as method ${cr_method#method} require super user rights and sudo was disabled by command line"
-	fi
-elif [[ "$have_su_rights" != 'yes' ]]; then
-	cr_method="method3"
-	stage_end_ok "Method 3 as safest without super user right"
-elif ((tmp_dir_free_space < OSX_inst_img_rw_size*3)); then
-	cr_method="method1"
-	stage_end_ok "Method 1 due to limited disk space"
-else
-	cr_method="method2"
-	stage_end_ok "Method 2"
-fi
-	
-unset img_bootable || exit_with_error
-if [[ "$cr_method" == "method1" ]] || [[ "$cr_method" == "method2" ]]; then
-	if [[ "$cr_method" == "method1" ]]; then
-		stage_start_nl "Converting BaseSystem.dmg to writable image"
-		OSX_inst_img_rw="$tmp_dir/OS_X_Install.sparsebundle"
-		hdiutil convert "$OSX_inst_base_dmg" -format UDSB -o "$OSX_inst_img_rw" -pmap || exit_with_error "Can't convert to writable image"
-		stage_end_ok "Converting succeed"
-	elif [[ "$cr_method" == "method2" ]]; then
-		stage_start_nl "Creating installation image from BaseSystem.dmg"
-		OSX_inst_img_rw="$tmp_dir/OS_X_Install.sparsebundle"
-		hdiutil create  "$OSX_inst_img_rw" -srcdevice "$OSX_inst_base_dmg" -format UDSB -layout SPUD || exit_with_error "Can't create writable image"
-		stage_end_ok "Creating succeed"
+		((OSX_inst_img_rw_size*=1024)) || exit_with_error # Recalculate into bytes
+		((OSX_inst_img_rw_size+=250*1024*1024)) || exit_with_error # Add 250 Mb for boot loader and other files
+		stage_end_ok "$OSX_inst_img_rw_size ($((OSX_inst_img_rw_size/(1024*1024))) MiB)"
 	fi
 
-	stage_start "Resizing writable image"
-	hdiutil resize -size "$OSX_inst_img_rw_size" "$OSX_inst_img_rw" -nofinalgap || exit_with_error "Can't resize writable image"
-	stage_end_ok "Resizing succeed"
-
-	stage_start_nl "Mounting writable image"
-	OSX_inst_img_rw_mnt="$tmp_dir/OS_X_Install_img_rw_mnt"
-	hdiutil attach "$OSX_inst_img_rw" -readwrite -nobrowse -mountpoint "$OSX_inst_img_rw_mnt" ${ver_opt+-noverify} || exit_with_error "Can't mount writable image"
-	stage_end_ok "Mounting succeed"
-elif [[ "$cr_method" == "method3" ]]; then
 	stage_start_nl "Creating blank writable image"
-	OSX_inst_img_rw="$tmp_dir/OS_X_Install.sparsebundle"
+	OSX_inst_img_rw="$tmp_dir/macOS_Install.sparsebundle"
 	OSX_inst_img_rw_tmp_name="$OSX_inst_prt_name" || exit_with_error
 	hdiutil create -size "$OSX_inst_img_rw_size" "$OSX_inst_img_rw" -type SPARSEBUNDLE -fs HFS+ -layout SPUD -volname "$OSX_inst_img_rw_tmp_name" || exit_with_error "Can't create writable image"
 	stage_end_ok "Creating succeed"
 
-	stage_start_nl "Mounting writable image"
+	stage_start_nl "Mounting blank writable image"
 	OSX_inst_img_rw_mnt="$tmp_dir/OS_X_Install_img_rw_mnt"
-	hdiutil attach "$OSX_inst_img_rw" -readwrite -nobrowse -mountpoint "$OSX_inst_img_rw_mnt" ${ver_opt+-noverify} || exit_with_error "Can't mount writable image"
+	hdiutil attach "$OSX_inst_img_rw" -readwrite -nobrowse -mountpoint "$OSX_inst_img_rw_mnt" ${ver_opt+-noverify} ${ver_opt+-noautofsck} || exit_with_error "Can't mount writable image"
 	stage_end_ok "Mounting succeed"
 
-	stage_start "Detecting mounted image device node"
-	OSX_inst_img_rw_dev=`diskutil info -plist "$OSX_inst_img_rw_mnt" | sed -n -e '\|<key>DeviceIdentifier</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|/dev/\1|p; q; }'` && \
-		[[ -n "$OSX_inst_img_rw_dev" ]] || exit_with_error "Can't find device node"
+	stage_start "Detecting mounted image parent device node"
+	OSX_inst_img_rw_dev=`diskutil info -plist "$OSX_inst_img_rw_mnt" | sed -n -e '\|<key>ParentWholeDisk</key>| { N; s|^.*<string>\([^>]\{1,\}\)</string>.*$|/dev/\1|p; q; }'` && \
+		[[ -n "$OSX_inst_img_rw_dev" ]]  && [[ -e "$OSX_inst_img_rw_dev" ]] || exit_with_error "Can't find device node"
 	stage_end_ok "$OSX_inst_img_rw_dev"
 
-	stage_start_nl "Restoring BaseSystem.dmg to writable image"
-	asr restore --source "$OSX_inst_base_dmg" --target "$OSX_inst_img_rw_dev" --erase --noprompt $ver_opt --buffers 1 --buffersize 64m || exit_with_error "Can't restore BaseSystem.dmg to writable image"
-	unset OSX_inst_img_rw_mnt || exit_with_error # OSX_inst_img_rw_mnt is no valid anymore as image was remounted to different mountpoint
-	img_bootable='yes'
-	stage_end_ok "Restoring succeed"
-
-	stage_start "Detecting re-mounted image volume name"
-	unset OSX_inst_img_rw_volname || exit_with_error
-	OSX_inst_img_rw_volname=`diskutil info -plist "$OSX_inst_img_rw_dev" | sed -n -e '\|<key>VolumeName</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|\1|p; q; }'` || unset OSX_inst_img_rw_folname
-	if [[ -z "$OSX_inst_img_rw_volname" ]]; then 
-		stage_end_warn "can't detect"
-	else
-		osascript -e "Tell application \"Finder\" to close the window \"$OSX_inst_img_rw_volname\"" &>/dev/null
-		stage_end_ok "$OSX_inst_img_rw_volname"
-	fi
+	stage_start_nl "Creating installer and required structure on writable image"
+	unset cr_inst_media_tool || exit_with_error
+	cr_inst_media_tool="$OSX_inst_app/Contents/Resources/createinstallmedia"
+	[[ -x "$cr_inst_media_tool" ]] || exit_with_error "Can't find \"createinstallmedia\" tool"
+	[[ -n "$sudo_prf" ]] && echo_warning "Next command will be executed with sudo, you may be asked for password"
+	$sudo_prf "$cr_inst_media_tool" --nointeraction --applicationpath "$OSX_inst_app" --volume "$OSX_inst_img_rw_mnt" || exit_with_error "Can't create installer and installation structure"
+	stage_end_ok "Creating succeed"
 
 	stage_start_nl "Remounting writable image to predefined mointpoint"
 	hdiutil detach "$OSX_inst_img_rw_dev" -force || exit_with_error "Can't unmount image"
 	unset OSX_inst_img_rw_dev
-	OSX_inst_img_rw_mnt="$tmp_dir/OS_X_Install_img_rw_mnt"
 	hdiutil attach "$OSX_inst_img_rw" -readwrite -nobrowse -mountpoint "$OSX_inst_img_rw_mnt" ${ver_opt+-noverify} || exit_with_error "Can't mount writable image"
 	stage_end_ok "Remounting succeed"
-else
-	exit_with_error "Unknown creation method"
-fi	
 
-stage_start "Detecting macOS version on image"
-unset OSX_inst_ver || exit_with_error "Can't unset variable"
-OSX_inst_img_rw_ver_file="$OSX_inst_img_rw_mnt/System/Library/CoreServices/SystemVersion.plist" || exit_with_error "Can't set variable"
-OSX_inst_ver=`sed -n -e '\|<key>ProductUserVisibleVersion</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|\1|p; q; }' "$OSX_inst_img_rw_ver_file"` || unset OSX_inst_ver
-if [[ -z "$OSX_inst_ver" ]]; then
-	stage_end_warn "not detected"
-else
-	stage_end_ok "$OSX_inst_ver"
-fi
+else # Methods 1-3 or method is not specified 
 
-[[ "$OSX_inst_ver" =~ ^10.13$ ]] || \
-	echo_warning "Warning! This script is tested only with images of macOS version 10.13. Use on your own risk!"
+	stage_start_nl "Mounting InstallESD.dmg"
+	OSX_inst_inst_dmg="$OSX_inst_app"'/Contents/SharedSupport/InstallESD.dmg'
+	OSX_inst_inst_dmg_mnt="$tmp_dir/InstallESD_dmg_mnt"
+	hdiutil attach "$OSX_inst_inst_dmg" -kernel -readonly -nobrowse ${ver_opt+-noverify} -mountpoint "$OSX_inst_inst_dmg_mnt" || exit_with_error "Can't mount installation image. Reboot recommended before retry."
+	OSX_inst_base_dmg="$OSX_inst_app"'/Contents/SharedSupport//BaseSystem.dmg' || exit_with_error
+	stage_end_ok "Mounting succeed"
 
-stage_start_nl "Renaming partition on writeable image"
-if ! diskutil rename "$OSX_inst_img_rw_mnt" "$OSX_inst_prt_name"; then
-	stage_end_warn "Partition was not renamed"
-else
-	unset OSX_inst_img_rw_volname
-	stage_end_ok "Renamed to \"$OSX_inst_prt_name\""
-fi
+	stage_start "Calculating required image size"
+	unset OSX_inst_inst_dmg_used_size OSX_inst_base_dmg_real_size OSX_inst_base_dmg_size OSX_inst_img_rw_size || exit_with_error "Can't unset variables"
+	OSX_inst_inst_dmg_used_size=$(hdiutil imageinfo "$OSX_inst_inst_dmg" -plist | \
+		sed -En -e '\|<key>Total Non-Empty Bytes</key>| { N; s|^.*<integer>(.+)</integer>.*$|\1|p; q; }') || unset OSX_inst_inst_dmg_used_size
+	OSX_inst_base_dmg_real_size=$(hdiutil imageinfo "$OSX_inst_base_dmg" -plist | \
+		sed -En -e '\|<key>Total Bytes</key>| { N; s|^.*<integer>(.+)</integer>.*$|\1|p; q; }') || unset OSX_inst_base_dmg_real_size
+	OSX_inst_base_dmg_size=$(stat -f %z "$OSX_inst_base_dmg") || unset OSX_inst_base_dmg_size
+	((OSX_inst_base_dmg_size=(OSX_inst_base_dmg_size/512 + 1)*512)) # round to sector bound
+	if !((OSX_inst_inst_dmg_used_size)) || !((OSX_inst_base_dmg_real_size)) || !((OSX_inst_base_dmg_size)); then
+		((OSX_inst_img_rw_size=12*1024*1024*1024))
+		stage_end_warn "Can't calculate, will use $OSX_inst_img_rw_size ($((OSX_inst_img_rw_size/(1024*1024))) MiB)"
+	else
+		((OSX_inst_img_rw_size=OSX_inst_base_dmg_real_size+(OSX_inst_inst_dmg_used_size-OSX_inst_base_dmg_size) ))
+		((OSX_inst_img_rw_size+=OSX_inst_img_rw_size/10)) # add 10% for overhead, no need to be precise
+		((OSX_inst_img_rw_size=(OSX_inst_img_rw_size/512 + 1)*512)) # round to sector bound
+		stage_end_ok "$OSX_inst_img_rw_size ($((OSX_inst_img_rw_size/(1024*1024))) MiB)"
+	fi
 
-stage_start "Copying BaseSystem.dmg to writeable image"
-# rsync -aIWEh --cache --progress "$OSX_inst_base_dmg" "$OSX_inst_img_rw_mnt/" || exit_with_error "Copying BaseSystem.dmg failed"
-cp -p "$OSX_inst_base_dmg" "$OSX_inst_img_rw_mnt/" || exit_with_error "Copying BaseSystem.dmg failed"
-cp -p "${OSX_inst_base_dmg%.dmg}.chunklist" "$OSX_inst_img_rw_mnt/" || exit_with_error "Copying BaseSystem.chunklist failed"
-stage_end_ok
+	stage_start "Checking for available disk space"
+	unset tmp_dir_free_space || exit_with_error
+	tmp_dir_free_space="$(df -bi "$tmp_dir" | \
+		sed -nE -e 's|^.+[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+([0-9]+)[[:space:]]+[0-9]{1,3}%[[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]{1,3}%[[:space:]]+/.*$|\1|p' )" || unset tmp_dir_free_space
+	if [[ "${tmp_dir_free_space-notset}" == "notset" ]] || ( [[ -n "$tmp_dir_free_space" ]] && !((tmp_dir_free_space)) ); then
+		tmp_dir_free_space='0'
+		stage_end_warn "Can't determinate"
+	else
+		((tmp_dir_free_space*=512))
+		if ((tmp_dir_free_space < OSX_inst_img_rw_size)); then
+			stage_end_warn "$tmp_dir_free_space ($((tmp_dir_free_space/(1024*1024))) MiB), image creation may fail"
+		else
+			stage_end_ok "$tmp_dir_free_space ($((tmp_dir_free_space/(1024*1024))) MiB)"
+		fi
+	fi
 
-stage_start "Filling Packages with real files"
-mkdir "$OSX_inst_img_rw_mnt/System/Installation/PackagesLink" || exit_with_error "Can't create directory"
-# rsync -aIWEh --progress "$OSX_inst_inst_dmg_mnt/Packages/" "$OSX_inst_img_rw_mnt/System/Installation/PackagesLink" || exit_with_error "Copying Packages failed" # --cache
-cp -pPR "$OSX_inst_inst_dmg_mnt/Packages/" "$OSX_inst_img_rw_mnt/System/Installation/PackagesLink" || exit_with_error "Copying Packages failed"
-stage_end_ok 
+	stage_start "Choosing creation method"
+	if [[ -n "$cr_method" ]]; then
+		stage_end_ok "Method ${cr_method#method}, specified on command line"
+		if [[ "$cr_method" != "method3" ]] && [[ "$have_su_rights" != "yes" ]] && [[ "$allow_sudo" != "yes" ]]; then
+			echo_warning "Resulting image probably will be unbootable as method ${cr_method#method} require super user rights and sudo was disabled by command line"
+		fi
+	elif [[ "$have_su_rights" != 'yes' ]]; then
+		cr_method="method3"
+		stage_end_ok "Method 3 as safest without super user right"
+	elif ((tmp_dir_free_space < OSX_inst_img_rw_size*3)); then
+		cr_method="method1"
+		stage_end_ok "Method 1 due to limited disk space"
+	else
+		cr_method="method2"
+		stage_end_ok "Method 2"
+	fi
+	
+	unset img_bootable || exit_with_error
+	if [[ "$cr_method" == "method1" ]] || [[ "$cr_method" == "method2" ]]; then
+		if [[ "$cr_method" == "method1" ]]; then
+			stage_start_nl "Converting BaseSystem.dmg to writable image"
+			OSX_inst_img_rw="$tmp_dir/OS_X_Install.sparsebundle"
+			hdiutil convert "$OSX_inst_base_dmg" -format UDSB -o "$OSX_inst_img_rw" -pmap || exit_with_error "Can't convert to writable image"
+			stage_end_ok "Converting succeed"
+		elif [[ "$cr_method" == "method2" ]]; then
+			stage_start_nl "Creating installation image from BaseSystem.dmg"
+			OSX_inst_img_rw="$tmp_dir/OS_X_Install.sparsebundle"
+			hdiutil create  "$OSX_inst_img_rw" -srcdevice "$OSX_inst_base_dmg" -format UDSB -layout SPUD || exit_with_error "Can't create writable image"
+			stage_end_ok "Creating succeed"
+		fi
 
-stage_start "Adding installation image icon"
-if cp -p "$OSX_inst_inst_dmg_mnt/Install "*.app/Contents/Resources/InstallAssistant.icns "$OSX_inst_inst_dmg_mnt/.VolumeIcon.icns"; then
+		stage_start "Resizing writable image"
+		hdiutil resize -size "$OSX_inst_img_rw_size" "$OSX_inst_img_rw" -nofinalgap || exit_with_error "Can't resize writable image"
+		stage_end_ok "Resizing succeed"
+
+		stage_start_nl "Mounting writable image"
+		OSX_inst_img_rw_mnt="$tmp_dir/OS_X_Install_img_rw_mnt"
+		hdiutil attach "$OSX_inst_img_rw" -readwrite -nobrowse -mountpoint "$OSX_inst_img_rw_mnt" ${ver_opt+-noverify} || exit_with_error "Can't mount writable image"
+		stage_end_ok "Mounting succeed"
+	elif [[ "$cr_method" == "method3" ]]; then
+		stage_start_nl "Creating blank writable image"
+		OSX_inst_img_rw="$tmp_dir/OS_X_Install.sparsebundle"
+		OSX_inst_img_rw_tmp_name="$OSX_inst_prt_name" || exit_with_error
+		hdiutil create -size "$OSX_inst_img_rw_size" "$OSX_inst_img_rw" -type SPARSEBUNDLE -fs HFS+ -layout SPUD -volname "$OSX_inst_img_rw_tmp_name" || exit_with_error "Can't create writable image"
+		stage_end_ok "Creating succeed"
+
+		stage_start_nl "Mounting writable image"
+		OSX_inst_img_rw_mnt="$tmp_dir/OS_X_Install_img_rw_mnt"
+		hdiutil attach "$OSX_inst_img_rw" -readwrite -nobrowse -mountpoint "$OSX_inst_img_rw_mnt" ${ver_opt+-noverify} || exit_with_error "Can't mount writable image"
+		stage_end_ok "Mounting succeed"
+
+		stage_start "Detecting mounted image device node"
+		OSX_inst_img_rw_dev=`diskutil info -plist "$OSX_inst_img_rw_mnt" | sed -n -e '\|<key>DeviceIdentifier</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|/dev/\1|p; q; }'` && \
+			[[ -n "$OSX_inst_img_rw_dev" ]] || exit_with_error "Can't find device node"
+		stage_end_ok "$OSX_inst_img_rw_dev"
+
+		stage_start_nl "Restoring BaseSystem.dmg to writable image"
+		asr restore --source "$OSX_inst_base_dmg" --target "$OSX_inst_img_rw_dev" --erase --noprompt $ver_opt --buffers 1 --buffersize 64m || exit_with_error "Can't restore BaseSystem.dmg to writable image"
+		unset OSX_inst_img_rw_mnt || exit_with_error # OSX_inst_img_rw_mnt is no valid anymore as image was remounted to different mountpoint
+		img_bootable='yes'
+		stage_end_ok "Restoring succeed"
+
+		stage_start "Detecting re-mounted image volume name"
+		unset OSX_inst_img_rw_volname || exit_with_error
+		OSX_inst_img_rw_volname=`diskutil info -plist "$OSX_inst_img_rw_dev" | sed -n -e '\|<key>VolumeName</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|\1|p; q; }'` || unset OSX_inst_img_rw_folname
+		if [[ -z "$OSX_inst_img_rw_volname" ]]; then 
+			stage_end_warn "can't detect"
+		else
+			osascript -e "Tell application \"Finder\" to close the window \"$OSX_inst_img_rw_volname\"" &>/dev/null
+			stage_end_ok "$OSX_inst_img_rw_volname"
+		fi
+
+		stage_start_nl "Remounting writable image to predefined mointpoint"
+		hdiutil detach "$OSX_inst_img_rw_dev" -force || exit_with_error "Can't unmount image"
+		unset OSX_inst_img_rw_dev
+		OSX_inst_img_rw_mnt="$tmp_dir/OS_X_Install_img_rw_mnt"
+		hdiutil attach "$OSX_inst_img_rw" -readwrite -nobrowse -mountpoint "$OSX_inst_img_rw_mnt" ${ver_opt+-noverify} || exit_with_error "Can't mount writable image"
+		stage_end_ok "Remounting succeed"
+	else
+		exit_with_error "Unknown creation method"
+	fi	
+
+	stage_start "Copying BaseSystem.dmg to writeable image"
+	# rsync -aIWEh --cache --progress "$OSX_inst_base_dmg" "$OSX_inst_img_rw_mnt/" || exit_with_error "Copying BaseSystem.dmg failed"
+	cp -p "$OSX_inst_base_dmg" "$OSX_inst_img_rw_mnt/" || exit_with_error "Copying BaseSystem.dmg failed"
+	cp -p "${OSX_inst_base_dmg%.dmg}.chunklist" "$OSX_inst_img_rw_mnt/" || exit_with_error "Copying BaseSystem.chunklist failed"
 	stage_end_ok
-else
-	stage_end_warn "Icon not added"
-fi
 
-stage_start "Configuring image as bootable"
-OSX_inst_img_rw_CoreSrv="$OSX_inst_img_rw_mnt/System/Library/CoreServices" || exit_with_error
-if bless --folder "$OSX_inst_img_rw_CoreSrv" \
-	--file "$OSX_inst_img_rw_mnt/usr/standalone/i386/boot.efi" --openfolder "$OSX_inst_img_rw_mnt" --label "Install $OSX_inst_name"; then
-	stage_end_ok
-else
-	stage_end_warn "Failed, image may not be bootable"
-fi
+	stage_start "Filling Packages with real files"
+	mkdir "$OSX_inst_img_rw_mnt/System/Installation/PackagesLink" || exit_with_error "Can't create directory"
+	# rsync -aIWEh --progress "$OSX_inst_inst_dmg_mnt/Packages/" "$OSX_inst_img_rw_mnt/System/Installation/PackagesLink" || exit_with_error "Copying Packages failed" # --cache
+	cp -pPR "$OSX_inst_inst_dmg_mnt/Packages/" "$OSX_inst_img_rw_mnt/System/Installation/PackagesLink" || exit_with_error "Copying Packages failed"
+	stage_end_ok 
 
-stage_start_nl "Unmounting InstallESD.dmg"
-hdiutil detach "$OSX_inst_inst_dmg_mnt" -force || exit_with_error "Can't unmount InstallESD.dmg"
-unset OSX_inst_img_rw_dev
-stage_end_ok "Unmointing succeed"
+	stage_start "Adding installation image icon"
+	if cp -p "$OSX_inst_img_rw_mnt/Install "*.app/Contents/Resources/InstallAssistant.icns "$OSX_inst_img_rw_mnt/.VolumeIcon.icns"; then
+		stage_end_ok
+	else
+		stage_end_warn "Icon not added"
+	fi
 
-if [[ $cust_script != 'no']]; then
-	stage_start "Adding custom helper for installation on virtual machine"
-	unset custom_script_file || exit_with_error
-	custom_script="$OSX_inst_img_rw_mnt/private/etc/rc.cdrom.local"
-	cat <<_EOF_ > "$custom_script_file"
+	stage_start "Configuring image as bootable"
+	OSX_inst_img_rw_CoreSrv="$OSX_inst_img_rw_mnt/System/Library/CoreServices" || exit_with_error
+	if bless --folder "$OSX_inst_img_rw_CoreSrv" \
+		--file "$OSX_inst_img_rw_mnt/usr/standalone/i386/boot.efi" --openfolder "$OSX_inst_img_rw_mnt" --label "Install $OSX_inst_name"; then
+		stage_end_ok
+	else
+		stage_end_warn "Failed, image may not be bootable"
+	fi
+
+	stage_start_nl "Unmounting InstallESD.dmg"
+	hdiutil detach "$OSX_inst_inst_dmg_mnt" -force || exit_with_error "Can't unmount InstallESD.dmg"
+	unset OSX_inst_img_rw_dev
+	stage_end_ok "Unmointing succeed"
+
+	if [[ $cust_script != 'no' ]]; then
+		stage_start "Adding custom helper for installation on virtual machine"
+		unset custom_script_file || exit_with_error
+		custom_script_file="$OSX_inst_img_rw_mnt/private/etc/rc.cdrom.local"
+		cat << _EOF_ > "$custom_script_file"
 _HW_MANUFACTURER=\$(ioreg -c IOPlatformExpertDevice -d 2 | sed -n -e 's| *"manufacturer" = <"\(.*\)">|\1|p' || echo 'Unknown')
 echo "Detected hardware manufacturer: \${_HW_MANUFACTURER}" | /usr/bin/logger -t "" -p install.notice
 if [[ \$_HW_MANUFACTURER = "VMware, Inc." ]]; then
@@ -766,15 +789,39 @@ else
 	echo 'Hard disk drive will not be automatically partitioned as not running on known virtual machine' | /usr/bin/logger -t "" -p install.notice
 fi
 _EOF_
-	if [[ $? -eq 0 ]] && chmod 0555 "$custom_script_file"; then
-		stage_end_ok
+		if [[ $? -eq 0 ]] && chmod 0555 "$custom_script_file"; then
+			stage_end_ok
+		else
+			rm -f "$custom_script_file"
+			[[ $cust_script == 'yes' ]] && exit_with_error "Can't add custom helper"
+			stage_end_warn "Failed, no virtual machine helper script was added"
+		fi
 	else
-		rm -f "$custom_script_file"
-		[[ $cust_script == 'yes' ]] && exit_with_error "Can't add custom helper"
-		stage_end_warn "Failed, no virtual machine helper script was added"
+		echo_enh "Not adding custom helper for installation on virtual machine"
 	fi
+	read -p "Waiting" ###################################################
+
+fi
+
+stage_start "Detecting macOS version on image"
+unset OSX_inst_ver || exit_with_error "Can't unset variable"
+OSX_inst_img_rw_ver_file="$OSX_inst_img_rw_mnt/System/Library/CoreServices/SystemVersion.plist" || exit_with_error "Can't set variable"
+OSX_inst_ver=`sed -n -e '\|<key>ProductUserVisibleVersion</key>| { N; s|^.*<string>\(.\{1,\}\)</string>.*$|\1|p; q; }' "$OSX_inst_img_rw_ver_file"` || unset OSX_inst_ver
+if [[ -z "$OSX_inst_ver" ]]; then
+	stage_end_warn "not detected"
 else
-	echo_enh "Not adding custom helper for installation on virtual machine"
+	stage_end_ok "$OSX_inst_ver"
+fi
+
+[[ "$OSX_inst_ver" =~ ^10.13$ ]] || \
+	echo_warning "Warning! This script is tested only with images of macOS version 10.13. Use on your own risk!"
+
+stage_start_nl "Renaming partition on writeable image"
+if ! diskutil rename "$OSX_inst_img_rw_mnt" "$OSX_inst_prt_name"; then
+	stage_end_warn "Partition was not renamed"
+else
+	unset OSX_inst_img_rw_volname
+	stage_end_ok "Renamed to \"$OSX_inst_prt_name\""
 fi
 
 stage_start_nl "Unmounting writable images"
